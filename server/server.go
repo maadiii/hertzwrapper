@@ -15,7 +15,8 @@ import (
 	"github.com/maadiii/hertzwrapper/errors"
 )
 
-func Run(opts ...config.Option) {
+func Run(devMode bool, opts ...config.Option) {
+	dev = devMode
 	s = server.New(opts...)
 	s.Use(recovery.Recovery())
 
@@ -30,6 +31,7 @@ func Run(opts ...config.Option) {
 
 var (
 	s           *server.Hertz
+	dev         bool
 	handlersMap map[string][]app.HandlerFunc = make(map[string][]app.HandlerFunc, 0)
 )
 
@@ -131,11 +133,16 @@ func isNil[T any](t T) bool {
 }
 
 func handleError(ctx *app.RequestContext, err error) {
-	switch t := err.(type) {
-	case *errors.Error:
-		ctx.AbortWithStatusJSON(abort(t), t)
-	default:
-		_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+	if dev {
+		switch t := err.(type) {
+		case *errors.Error:
+			if !dev {
+				t.Message = strings.Split(t.Message, "\n")[0]
+			}
+			ctx.AbortWithStatusJSON(abort(t), t)
+		default:
+			_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+		}
 	}
 }
 

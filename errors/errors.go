@@ -21,7 +21,7 @@ var _ error = (*Error)(nil)
 // example: e.Pattern("foo field must be in [0] and [1]", 10, 20)
 func (e *Error) Pattern(value string, params ...any) error {
 	stack := stack()
-	e.Message = fmt.Sprintf("%s\n%s", value, stack)
+	e.Message = fmt.Sprintf("%s\n%s", value, strings.Join(stack, "\n"))
 	e.Params = append(e.Params, params...)
 
 	return e
@@ -49,14 +49,14 @@ func New(text string) *Error {
 	stack := stack()
 
 	return &Error{
-		Message: fmt.Sprintf("%s\n%s", errors.New(text), stack),
+		Message: fmt.Sprintf("%s\n%s", errors.New(text), strings.Join(stack, "\n")),
 	}
 }
 
 func Wrap(err error) *Error {
 	stack := stack()
 	e := &Error{
-		Message: fmt.Sprintf("%s\n%s", err.Error(), stack),
+		Message: fmt.Sprintf("%s\n%s", err.Error(), strings.Join(stack, "\n")),
 	}
 
 	return e
@@ -79,7 +79,7 @@ func Wrap(err error) *Error {
 // }
 
 func stack() []string {
-	buf := make([]byte, 512)
+	buf := make([]byte, 2048)
 	runtime.Stack(buf, false)
 
 	stack := strings.Split(string(buf), "\n")
