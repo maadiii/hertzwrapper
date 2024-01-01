@@ -27,3 +27,23 @@ func (ctx *Context) Path() []byte {
 func (ctx *Context) FullPath() string {
 	return ctx.request.FullPath()
 }
+
+func (ctx *Context) Set(key string, value any) {
+	ctx.request.Set(key, value)
+}
+
+func (ctx *Context) Value(key any) any {
+	return ctx.request.Value(key)
+}
+
+func (ctx *Context) SetIdentity(identity Identity) {
+	ctx.request.Set(identityKey, identity)
+}
+
+func (ctx *Context) Identity() Identity {
+	return ctx.request.Value(identityKey).(Identity)
+}
+
+type Identity map[string]any
+
+const identityKey = "identity"
