@@ -133,16 +133,14 @@ func isNil[T any](t T) bool {
 }
 
 func handleError(ctx *app.RequestContext, err error) {
-	if dev {
-		switch t := err.(type) {
-		case *errors.Error:
-			if !dev {
-				t.Message = strings.Split(t.Message, "\n")[0]
-			}
-			ctx.AbortWithStatusJSON(abort(t), t)
-		default:
-			_ = ctx.AbortWithError(http.StatusInternalServerError, err)
+	switch t := err.(type) {
+	case *errors.Error:
+		if !dev {
+			t.Message = strings.Split(t.Message, "\n")[0]
 		}
+		ctx.AbortWithStatusJSON(abort(t), t)
+	default:
+		_ = ctx.AbortWithError(http.StatusInternalServerError, err)
 	}
 }
 
