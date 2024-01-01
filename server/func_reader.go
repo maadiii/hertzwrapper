@@ -43,6 +43,12 @@ func funcDescription(f interface{}) string {
 	importPath, _ := filepath.Abs("/")
 
 	myDoc := doc.New(pkg, importPath, doc.AllDecls)
+	for _, theFunc := range myDoc.Funcs {
+		if theFunc.Name == funcName {
+			return theFunc.Doc
+		}
+	}
+
 	for _, theType := range myDoc.Types {
 		for _, theFunc := range theType.Funcs {
 			if theFunc.Name == funcName {
