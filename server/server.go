@@ -141,6 +141,8 @@ func handleError(ctx *app.RequestContext, err error) {
 
 func abort(err *errors.Error) (status int) { //nolint
 	switch err {
+	case errors.BadRequest:
+		status = http.StatusBadRequest
 	case errors.Unauthorized:
 		status = http.StatusUnauthorized
 	case errors.PaymentRequired:
