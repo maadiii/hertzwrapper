@@ -62,28 +62,28 @@ func Handle[IN any, OUT any](handlers ...func(*Context, IN) (OUT, error)) {
 	key := fmt.Sprintf("%s::%s::%s::%s", main.method, main.path, main.status, main.contentType)
 
 	for _, h := range befores {
-		handlersMap[key] = append(handlersMap[key], handle(h))
+		handlersMap[key] = append(handlersMap[key], handle(h.action, main.method, main.path, main.status, main.contentType))
 	}
 
-	handlersMap[key] = append(handlersMap[key], handle(main))
+	handlersMap[key] = append(handlersMap[key], handle(main.action, main.method, main.path, main.status, main.contentType))
 
 	for _, h := range afters {
-		handlersMap[key] = append(handlersMap[key], handle(h))
+		handlersMap[key] = append(handlersMap[key], handle(h.action, main.method, main.path, main.status, main.contentType))
 	}
 }
 
-func handle[IN any, OUT any](handler *Handler[IN, OUT]) app.HandlerFunc {
+func handle[IN any, OUT any](handler func(*Context, IN) (OUT, error), method, path, status, contentType string) app.HandlerFunc {
 	return func(c context.Context, rctx *app.RequestContext) {
-		req := requestType[IN](handler.action)
+		req := requestType[IN](handler)
 		if err := rctx.Bind(req); err != nil {
 			rctx.AbortWithStatusJSON(
 				http.StatusUnprocessableEntity,
 				errors.New(fmt.Sprintf( //nolint
 					"%s\n#Api=%s#Method=%s#Action=%s",
 					err.Error(),
-					handler.path,
-					handler.method,
-					funcPathAndName(handler.action),
+					path,
+					method,
+					funcPathAndName(handler),
 				)),
 			)
 
@@ -95,16 +95,16 @@ func handle[IN any, OUT any](handler *Handler[IN, OUT]) app.HandlerFunc {
 			request: rctx,
 		}
 
-		res, err := handler.action(ctx, req)
+		res, err := handler(ctx, req)
 		if err != nil {
 			handleError(rctx, err)
 
 			return
 		}
 
-		rctx.SetContentType(handler.contentType)
+		rctx.SetContentType(contentType)
 
-		status, err := strconv.Atoi(handler.status)
+		status, err := strconv.Atoi(status)
 		if err != nil {
 			panic(err)
 		}
