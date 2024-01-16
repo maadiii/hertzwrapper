@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -15,10 +13,25 @@ import (
 	"github.com/maadiii/hertzwrapper/errors"
 )
 
-func Run(devMode bool, opts ...config.Option) {
+func Hertz(devMode bool, opts ...config.Option) *server.Hertz {
 	dev = devMode
 	s = server.New(opts...)
 	s.Use(recovery.Recovery())
+
+	for i := range uses {
+		s.Use(uses[i])
+	}
+
+	for relativePath, root := range static {
+		s.Static(relativePath, root)
+	}
+
+	for relativePath, filePath := range staticFile {
+		s.StaticFile(relativePath, filePath)
+	}
+
+	s.NoMethod(noMethodHandlers...)
+	s.NoRoute(noRouteHandlers...)
 
 	for key, handlers := range handlersMap {
 		action := strings.Split(key, "::")
@@ -26,13 +39,18 @@ func Run(devMode bool, opts ...config.Option) {
 		s.Handle(action[0], action[1], handlers...)
 	}
 
-	s.Spin()
+	return s
 }
 
 var (
-	s           *server.Hertz
-	dev         bool
-	handlersMap map[string][]app.HandlerFunc = make(map[string][]app.HandlerFunc, 0)
+	s                *server.Hertz
+	dev              bool
+	uses             = make([]app.HandlerFunc, 0)
+	static           = make(map[string]string)
+	staticFile       = make(map[string]string)
+	noMethodHandlers = make([]app.HandlerFunc, 0)
+	noRouteHandlers  = make([]app.HandlerFunc, 0)
+	handlersMap      = make(map[string][]app.HandlerFunc, 0)
 )
 
 func Handle[IN any, OUT any](handlers ...func(*Context, IN) (OUT, error)) {
@@ -41,16 +59,16 @@ func Handle[IN any, OUT any](handlers ...func(*Context, IN) (OUT, error)) {
 	main := &Handler[IN, OUT]{}
 
 	for _, h := range handlers {
-		handler := &Handler[IN, OUT]{action: h}
+		handler := &Handler[IN, OUT]{Action: h}
 		handler.fix()
 
-		if len(handler.path) == 0 && len(handler.method) == 0 {
+		if len(handler.Path) == 0 && len(handler.Method) == 0 {
 			befores = append(befores, handler)
 
 			continue
 		}
 
-		if len(handler.path) != 0 && len(handler.method) != 0 {
+		if len(handler.Path) != 0 && len(handler.Method) != 0 {
 			main = handler
 
 			continue
@@ -59,31 +77,33 @@ func Handle[IN any, OUT any](handlers ...func(*Context, IN) (OUT, error)) {
 		afters = append(afters, handler)
 	}
 
-	key := fmt.Sprintf("%s::%s::%s::%s", main.method, main.path, main.status, main.contentType)
+	key := fmt.Sprintf("%s::%s::%d::%s", main.Method, main.Path, main.Status, main.ActionType)
 
 	for _, h := range befores {
-		handlersMap[key] = append(handlersMap[key], handle(h.action, main.method, main.path, main.status, main.contentType))
+		h.describer = main.describer
+		handlersMap[key] = append(handlersMap[key], handle(h))
 	}
 
-	handlersMap[key] = append(handlersMap[key], handle(main.action, main.method, main.path, main.status, main.contentType))
+	handlersMap[key] = append(handlersMap[key], handle(main))
 
 	for _, h := range afters {
-		handlersMap[key] = append(handlersMap[key], handle(h.action, main.method, main.path, main.status, main.contentType))
+		h.describer = main.describer
+		handlersMap[key] = append(handlersMap[key], handle(h))
 	}
 }
 
-func handle[IN any, OUT any](handler func(*Context, IN) (OUT, error), method, path, status, contentType string) app.HandlerFunc {
+func handle[IN any, OUT any](handler *Handler[IN, OUT]) app.HandlerFunc {
 	return func(c context.Context, rctx *app.RequestContext) {
-		req := requestType[IN](handler)
+		req := requestType[IN](handler.Action)
 		if err := rctx.Bind(req); err != nil {
 			rctx.AbortWithStatusJSON(
 				http.StatusUnprocessableEntity,
 				errors.New(fmt.Sprintf( //nolint
 					"%s\n#Api=%s#Method=%s#Action=%s",
 					err.Error(),
-					path,
-					method,
-					funcPathAndName(handler),
+					handler.Path,
+					handler.Method,
+					funcPathAndName(handler.Action),
 				)),
 			)
 
@@ -92,44 +112,18 @@ func handle[IN any, OUT any](handler func(*Context, IN) (OUT, error), method, pa
 
 		ctx := &Context{
 			Context: c,
-			request: rctx,
+			Request: rctx,
 		}
 
-		res, err := handler(ctx, req)
+		res, err := handler.Action(ctx, req)
 		if err != nil {
 			handleError(rctx, err)
 
 			return
 		}
 
-		rctx.SetContentType(contentType)
-
-		status, err := strconv.Atoi(status)
-		if err != nil {
-			panic(err)
-		}
-
-		if isNil(res) {
-			rctx.Status(status)
-
-			return
-		}
-
-		rctx.JSON(status, res)
+		handler.RespondFn(rctx, res)
 	}
-}
-
-func isNil[T any](t T) bool {
-	v := reflect.ValueOf(t)
-	kind := v.Kind()
-	// Must be one of these types to be nillable
-	return (kind == reflect.Ptr ||
-		kind == reflect.Interface ||
-		kind == reflect.Slice ||
-		kind == reflect.Map ||
-		kind == reflect.Chan ||
-		kind == reflect.Func) &&
-		v.IsNil()
 }
 
 func handleError(ctx *app.RequestContext, err error) {
@@ -138,95 +132,47 @@ func handleError(ctx *app.RequestContext, err error) {
 		if !dev {
 			t.Message = strings.Split(t.Message, "\n")[0]
 		}
-		ctx.AbortWithStatusJSON(abort(t), t)
+
+		status, ok := abortType[t]
+		if !ok {
+			ctx.AbortWithStatusJSON(http.StatusInternalServerError, t)
+		}
+
+		ctx.AbortWithStatusJSON(status, t)
 	default:
 		_ = ctx.AbortWithError(http.StatusInternalServerError, err)
 	}
 }
 
-func abort(err *errors.Error) (status int) { //nolint
-	switch err {
-	case errors.BadRequest:
-		status = http.StatusBadRequest
-	case errors.Unauthorized:
-		status = http.StatusUnauthorized
-	case errors.PaymentRequired:
-		status = http.StatusPaymentRequired
-	case errors.Forbidden:
-		status = http.StatusForbidden
-	case errors.NotFound:
-		status = http.StatusNotFound
-	case errors.MethodNotAllowed:
-		status = http.StatusMethodNotAllowed
-	case errors.NotAcceptable:
-		status = http.StatusNotAcceptable
-	case errors.ProxyAuthRequired:
-		status = http.StatusProxyAuthRequired
-	case errors.RequestTimeout:
-		status = http.StatusRequestTimeout
-	case errors.Conflict:
-		status = http.StatusConflict
-	case errors.Gone:
-		status = http.StatusGone
-	case errors.LengthRequired:
-		status = http.StatusLengthRequired
-	case errors.PreconditionFailed:
-		status = http.StatusPreconditionFailed
-	case errors.RequestEntityTooLarge:
-		status = http.StatusRequestEntityTooLarge
-	case errors.RequestURITooLong:
-		status = http.StatusRequestURITooLong
-	case errors.UnsupportedMediaType:
-		status = http.StatusUnsupportedMediaType
-	case errors.RequestedRangeNotSatisfiable:
-		status = http.StatusRequestedRangeNotSatisfiable
-	case errors.ExpectationFailed:
-		status = http.StatusExpectationFailed
-	case errors.Teapot:
-		status = http.StatusTeapot
-	case errors.MisdirectedRequest:
-		status = http.StatusUnauthorized
-	case errors.UnprocessableEntity:
-		status = http.StatusUnprocessableEntity
-	case errors.Locked:
-		status = http.StatusLocked
-	case errors.FailedDependency:
-		status = http.StatusFailedDependency
-	case errors.TooEarly:
-		status = http.StatusTooEarly
-	case errors.UpgradeRequired:
-		status = http.StatusUpgradeRequired
-	case errors.PreconditionRequired:
-		status = http.StatusPreconditionFailed
-	case errors.TooManyRequests:
-		status = http.StatusTooManyRequests
-	case errors.RequestHeaderFieldsTooLarge:
-		status = http.StatusRequestHeaderFieldsTooLarge
-	case errors.UnavailableForLegalReasons:
-		status = http.StatusUnavailableForLegalReasons
-	case errors.NotImplemented:
-		status = http.StatusNotImplemented
-	case errors.BadGateway:
-		status = http.StatusBadGateway
-	case errors.ServiceUnavailable:
-		status = http.StatusServiceUnavailable
-	case errors.GatewayTimeout:
-		status = http.StatusGatewayTimeout
-	case errors.HTTPVersionNotSupported:
-		status = http.StatusHTTPVersionNotSupported
-	case errors.VariantAlsoNegotiates:
-		status = http.StatusVariantAlsoNegotiates
-	case errors.InsufficientStorage:
-		status = http.StatusInsufficientStorage
-	case errors.LoopDetected:
-		status = http.StatusLoopDetected
-	case errors.NotExtended:
-		status = http.StatusNotExtended
-	case errors.NetworkAuthenticationRequired:
-		status = http.StatusNetworkAuthenticationRequired
-	default:
-		status = http.StatusInternalServerError
-	}
+// NoMethod sets the handlers called when the HTTP method does not match.
+func NoMethod(handlers ...app.HandlerFunc) {
+	noMethodHandlers = append(noMethodHandlers, handlers...)
+}
 
-	return //nolint
+// NoRoute adds handlers for NoRoute. It returns a 404 code by default.
+func NoRoute(handlers ...app.HandlerFunc) {
+	noRouteHandlers = append(noRouteHandlers, handlers...)
+}
+
+// Static serves files from the given file system root.
+// To use the operating system's file system implementation,
+// use :
+//
+//	router.Static("/static", "/var/www")
+func Static(relativePath, root string) {
+	static[relativePath] = root
+}
+
+// StaticFile registers a single route in order to Serve a single file of the local filesystem.
+// router.StaticFile("favicon.ico", "./resources/favicon.ico")
+func StaticFile(relativePath, filepath string) {
+	staticFile[relativePath] = filepath
+}
+
+// Use attaches a global middleware to the router. ie. the middleware attached though Use() will be
+// included in the handlers chain for every single request. Even 404, 405, static files...
+//
+// For example, this is the right place for a logger or error management middleware.
+func Use(handlers ...app.HandlerFunc) {
+	uses = append(uses, handlers...)
 }

@@ -1,27 +1,38 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/cloudwego/hertz/pkg/app"
 )
 
 type Handler[IN any, OUT any] struct {
-	action      func(*Context, IN) (OUT, error)
-	path        string
-	method      string
-	status      string
-	contentType string
+	Action    func(*Context, IN) (OUT, error)
+	RespondFn func(ctx *app.RequestContext, response any)
+
+	*describer
+}
+
+type describer struct {
+	Path        string
+	Method      string
+	Status      int
+	ContentType string
+	ActionType  string
 }
 
 func (h *Handler[IN, OUT]) fix() {
-	name := funcPathAndName(h.action)
+	name := funcPathAndName(h.Action)
 	desc := h.getFixedDescriberArray()
 
 	for _, d := range desc {
 		if strings.HasPrefix(d, "/") {
 			d = strings.TrimRight(d, "/")
-			h.path = d
+			h.Path = d
 
 			continue
 		}
@@ -32,23 +43,33 @@ func (h *Handler[IN, OUT]) fix() {
 				panic(fmt.Sprintf("%s has wrong @action describer, Invalid VERB", name))
 			}
 
-			h.method = verb
+			h.Method = verb
 
 			continue
 		}
 
-		if _, err := strconv.Atoi(d); err == nil {
-			h.status = d
+		if status, err := strconv.Atoi(d); err == nil {
+			h.Status = status
 
 			continue
 		}
 
-		h.contentType = d
+		if strings.Contains(d, "@") {
+			typeAndContentType := strings.Split(d, "@")
+			h.ActionType = typeAndContentType[0]
+			h.ContentType = typeAndContentType[1]
+		} else {
+			h.ActionType = d
+		}
 	}
+
+	h.setResponder()
 }
 
 func (h *Handler[IN, OUT]) getFixedDescriberArray() []string {
-	comment := funcDescription(h.action)
+	h.describer = new(describer)
+
+	comment := funcDescription(h.Action)
 	comments := strings.Split(comment, "\n")
 
 	for _, actionDescription := range comments {
@@ -72,4 +93,53 @@ func (h *Handler[IN, OUT]) getFixedDescriberArray() []string {
 	}
 
 	return []string{}
+}
+
+func (h *Handler[IN, OUT]) setResponder() {
+	if strings.Contains(h.ActionType, "html") {
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			ctx.HTML(h.Status, h.ActionType, res)
+		}
+
+		return
+	}
+
+	switch h.ActionType {
+	case "":
+		h.RespondFn = func(ctx *app.RequestContext, _ any) { ctx.Status(h.Status) }
+	case "json":
+		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.JSON(h.Status, res) }
+	case "xml":
+		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.XML(h.Status, res) }
+	case "file":
+		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.File(fmt.Sprintf("%v", res)) }
+	case "text":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			_, err := ctx.WriteString(fmt.Sprintf("%s", res))
+			if err != nil {
+				panic(err)
+			}
+		}
+	case "redirect":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			ctx.Redirect(h.Status, []byte(fmt.Sprintf("%v", res)))
+		}
+	case "attachment":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			filepath := fmt.Sprintf("%v", res)
+			filename := strings.Split(filepath, "/")
+			ctx.FileAttachment(filepath, filename[len(filename)-1])
+		}
+	case "stream":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			ctx.SetContentType(h.ContentType)
+
+			reader := bytes.NewReader(reflect.ValueOf(res).Bytes())
+			if _, err := reader.WriteTo(ctx.Response.BodyWriter()); err != nil {
+				panic(err)
+			}
+		}
+	default:
+		panic("actionType in action describer not acceptable")
+	}
 }

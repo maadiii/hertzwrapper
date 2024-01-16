@@ -1,34 +1,18 @@
 package main
 
 import (
+	"github.com/maadiii/hertzwrapper/example/handler"
 	"github.com/maadiii/hertzwrapper/server"
 )
 
 func main() {
-	server.Handle(Users)
+	server.Handle(handler.Users)
 
-	server.Run(
-		server.WithAddress(":8080"),
+	hertz := server.Hertz(
+		true,
+		server.WithHostPorts(":8080"),
 	)
-}
+	hertz.LoadHTMLGlob("example/views/index.html")
 
-// @action /users/:id [POST] 200 application/json
-func Users(ctx *server.Context, in *RequestGet) (out *ResponseGet, err error) {
-	out = &ResponseGet{
-		ID:     in.ID,
-		Name:   "maadi",
-		Family: "azizi",
-	}
-
-	return
-}
-
-type RequestGet struct {
-	ID int `path:"id" json:"id" form:"id" query:"id" cookie:"id" header:"id"`
-}
-
-type ResponseGet struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Family string `json:"family"`
+	hertz.Spin()
 }
