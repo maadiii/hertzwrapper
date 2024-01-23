@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/app/server/render"
 )
 
 type Handler[IN any, OUT any] struct {
@@ -29,7 +30,7 @@ func (h *Handler[IN, OUT]) fix() {
 	name := funcPathAndName(h.Action)
 	desc := h.getFixedDescriberArray()
 
-	for _, d := range desc {
+	for i, d := range desc {
 		if strings.HasPrefix(d, "/") {
 			d = strings.TrimRight(d, "/")
 			h.Path = d
@@ -57,7 +58,8 @@ func (h *Handler[IN, OUT]) fix() {
 		if strings.Contains(d, "@") {
 			typeAndContentType := strings.Split(d, "@")
 			h.ActionType = typeAndContentType[0]
-			h.ContentType = typeAndContentType[1]
+			h.ContentType = fmt.Sprintf("%s %s", typeAndContentType[1], desc[i+1])
+			break
 		} else {
 			h.ActionType = d
 		}
@@ -96,7 +98,7 @@ func (h *Handler[IN, OUT]) getFixedDescriberArray() []string {
 }
 
 func (h *Handler[IN, OUT]) setResponder() {
-	if strings.Contains(h.ActionType, "html") {
+	if strings.Contains(h.ActionType, "html") || strings.Contains(h.ActionType, "tmpl") {
 		h.RespondFn = func(ctx *app.RequestContext, res any) {
 			ctx.HTML(h.Status, h.ActionType, res)
 		}
@@ -109,6 +111,8 @@ func (h *Handler[IN, OUT]) setResponder() {
 		h.RespondFn = func(ctx *app.RequestContext, _ any) { ctx.Status(h.Status) }
 	case "json":
 		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.JSON(h.Status, res) }
+	case "json_pure":
+		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.PureJSON(h.Status, res) }
 	case "xml":
 		h.RespondFn = func(ctx *app.RequestContext, res any) { ctx.XML(h.Status, res) }
 	case "file":
@@ -138,6 +142,17 @@ func (h *Handler[IN, OUT]) setResponder() {
 			if _, err := reader.WriteTo(ctx.Response.BodyWriter()); err != nil {
 				panic(err)
 			}
+		}
+	case "data":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			ctx.SetContentType(h.ContentType)
+
+			ctx.Data(h.Status, h.ContentType, reflect.ValueOf(res).Bytes())
+		}
+
+	case "render":
+		h.RespondFn = func(ctx *app.RequestContext, res any) {
+			ctx.Render(h.Status, res.(render.Render))
 		}
 	default:
 		panic("actionType in action describer not acceptable")

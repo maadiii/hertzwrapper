@@ -94,8 +94,8 @@ func Handle[IN any, OUT any](handlers ...func(*Context, IN) (OUT, error)) {
 
 func handle[IN any, OUT any](handler *Handler[IN, OUT]) app.HandlerFunc {
 	return func(c context.Context, rctx *app.RequestContext) {
-		req := requestType[IN](handler.Action)
-		if err := rctx.Bind(req); err != nil {
+		req, err := bind(handler, rctx)
+		if err != nil {
 			rctx.AbortWithStatusJSON(
 				http.StatusUnprocessableEntity,
 				errors.New(fmt.Sprintf( //nolint

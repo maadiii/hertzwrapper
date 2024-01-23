@@ -2,7 +2,10 @@ module github.com/maadiii/hertzwrapper
 
 go 1.21.0
 
-require github.com/cloudwego/hertz v0.7.3
+require (
+	github.com/cloudwego/hertz v0.7.3
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/bytedance/go-tagexpr/v2 v2.9.2 // indirect

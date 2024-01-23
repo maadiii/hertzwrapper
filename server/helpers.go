@@ -4,13 +4,21 @@ import (
 	"net/http"
 	"reflect"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/maadiii/hertzwrapper/errors"
 )
 
-func requestType[T any](v any) T {
-	p := reflect.TypeOf(v).In(1).Elem()
+func bind[IN any, OUT any](handler *Handler[IN, OUT], rctx *app.RequestContext) (req IN, err error) {
+	p := reflect.TypeOf(handler.Action).In(1)
+	if p.Kind() == reflect.Interface {
+		return
+	}
 
-	return reflect.New(p).Interface().(T)
+	req = reflect.New(p.Elem()).Interface().(IN)
+
+	err = rctx.Bind(req)
+
+	return
 }
 
 var methods = map[string]string{
