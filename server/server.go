@@ -112,7 +112,7 @@ func handle[IN any, OUT any](handler *Handler[IN, OUT]) app.HandlerFunc {
 
 		ctx := &Context{
 			Context: c,
-			Request: rctx,
+			request: rctx,
 		}
 
 		res, err := handler.Action(ctx, req)
